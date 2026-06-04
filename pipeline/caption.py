@@ -12,15 +12,25 @@ Florence-2-large is small (~0.7 B) and loads quickly even alongside Flux.
 from __future__ import annotations
 
 import argparse
+import time
 from pathlib import Path
 from typing import Callable, Optional
 
 from PIL import Image
 
-from .config import paths
+from .config import paths, settings
 
 _MODEL_ID = "microsoft/Florence-2-large"
 _TASK = "<DETAILED_CAPTION>"
+
+# Deterministic stub descriptions used in mock mode (no Florence-2 download).
+_MOCK_DESCRIPTIONS = [
+    "a close-up portrait of a person, soft natural lighting, neutral background",
+    "a person smiling at the camera, outdoor daylight, shallow depth of field",
+    "a half-body photo of a person wearing casual clothing, indoor setting",
+    "a candid photo of a person, side profile, warm tones",
+    "a portrait of a person with a plain background, even studio lighting",
+]
 
 # Lazily-loaded singletons so repeated calls (e.g. from the web backend) reuse
 # the model instead of reloading it every time.
@@ -100,8 +110,13 @@ def caption_project(
                 progress(i, total, img_path.name)
             continue
 
-        with Image.open(img_path) as im:
-            description = _caption_one(im.convert("RGB"))
+        if settings.mock:
+            # No Florence-2 — deterministic stub so the flow works offline.
+            time.sleep(0.3)
+            description = _MOCK_DESCRIPTIONS[(i - 1) % len(_MOCK_DESCRIPTIONS)]
+        else:
+            with Image.open(img_path) as im:
+                description = _caption_one(im.convert("RGB"))
 
         caption = f"{trigger_word}, {description}" if trigger_word else description
         txt_path.write_text(caption, encoding="utf-8")

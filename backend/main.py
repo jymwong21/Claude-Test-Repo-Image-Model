@@ -99,6 +99,8 @@ async def health() -> dict:
         pass
     return {
         "status": "ok",
+        "mock": settings.mock,
+        "inference_backend": settings.inference_backend,
         "gpu": gpu,
         "hf_token_configured": bool(settings.hf_token),
         "ai_toolkit_ready": (settings.ai_toolkit_dir / "run.py").exists(),

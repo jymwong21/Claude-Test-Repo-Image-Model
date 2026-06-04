@@ -1,0 +1,16 @@
+# ── Flux LoRA Studio — lightweight deps for MOCK / dev mode ───────────────────
+# Use this (NOT requirements.txt) when running in mock mode on a laptop, in
+# Codespaces, or anywhere without a GPU. Total download is ~30 MB — no torch,
+# no diffusers, no transformers, no Flux. Run the app with MOCK=true.
+#
+#     pip install -r requirements-dev.txt
+#     MOCK=true python -m backend.main
+
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+aiofiles>=24.1
+pydantic>=2.7
+python-dotenv>=1.0
+Pillow>=10.4
+pyyaml>=6.0

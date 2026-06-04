@@ -31,6 +31,16 @@ class Settings:
     port: int = int(os.environ.get("PORT", "8000"))
     caption_backend: str = os.environ.get("CAPTION_BACKEND", "florence2")
 
+    # Mock mode: stub the GPU-heavy stages (caption/train/generate) so the whole
+    # UI flow runs with no model downloads and no GPU — for dev/Codespaces/planes.
+    # Default off (production-safe); the dev container sets MOCK=true.
+    mock: bool = os.environ.get("MOCK", "false").lower() in ("1", "true", "yes")
+
+    # Which real inference backend to use when mock is off:
+    #   "flux"    — FLUX.1-dev (production, needs the 5090 + ~24 GB model)
+    #   "sdturbo" — small SD-Turbo model, validates real generation on a modest GPU
+    inference_backend: str = os.environ.get("INFERENCE_BACKEND", "flux").lower()
+
     # Path to the cloned ai-toolkit checkout (created by runpod/setup.sh).
     ai_toolkit_dir: Path = field(
         default_factory=lambda: Path(

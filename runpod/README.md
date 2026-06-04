@@ -2,6 +2,30 @@
 
 A step-by-step for getting Flux LoRA Studio running on a rented 5090.
 
+## 0. Add credits (paying for compute)
+
+RunPod runs on **prepaid credits** — you load a balance, then pods bill against it
+per second while running.
+
+1. Create an account and sign in at **runpod.io → Console**.
+2. Go to **Billing** (left sidebar) → **Add Credits**.
+3. Pay by **credit/debit card** (via Stripe) or **crypto**. The usual **minimum is
+   $10**. You can optionally enable **auto-reload** so a pod never dies mid-run.
+4. (Optional) Set a **spend limit** so you can't be surprised.
+
+**What you'll actually spend:**
+- An RTX 5090 runs roughly **$0.7–1.0/hr** (Community vs Secure Cloud).
+- A typical personal LoRA (15–30 images, ~2000 steps) trains in **~30–50 min**, so a
+  full session — setup + first model download + a training run + some generation — is
+  usually **$2–5**. $10 of credit is plenty to start.
+- Billing is **per-second while the pod is RUNNING**. **Stop the pod when idle.**
+- A **network volume** (recommended) costs a few **cents/GB-month** and is billed even
+  while the pod is stopped — but it keeps your ~24 GB model + LoRAs so you don't
+  re-download them next time.
+
+> **Community Cloud** (cheaper, hosted by individuals) vs **Secure Cloud** (datacenter,
+> more reliable). Check **RTX 5090** availability under each and pick whichever has stock.
+
 ## 1. Create the pod
 
 1. Go to **runpod.io → Pods → Deploy**.
@@ -48,13 +72,13 @@ Then in the RunPod dashboard open **Connect → HTTP Service [Port 8000]**. You'
 land on the Flux LoRA Studio UI. From there: upload photos → caption → train →
 generate.
 
-## 4. Costs & tips
+## 4. Tips
 
-- A 5090 on RunPod runs roughly **$0.7–1.0/hr** (community vs secure cloud).
 - First training run downloads FLUX.1-dev (~24 GB) once; it's cached on the
   `/workspace` volume after that.
-- A typical personal LoRA (15–25 images, ~2000 steps) trains in **~30–50 min**.
 - **Stop the pod** when you're done to avoid idle charges. With a network volume,
   your models and LoRAs are still there when you restart.
 - The trained LoRA `.safetensors` files live in `data/output/<name>/` — download
   them from the UI or via `scp` to keep them after you delete the pod.
+- Want to try the app's flow *before* paying for a GPU? Run it in **mock mode** first
+  (see the main `README.md` → "Try it now") — same UI, no GPU, no downloads.

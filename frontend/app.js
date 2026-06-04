@@ -42,16 +42,21 @@ document.querySelectorAll(".rail-step").forEach((b) =>
 async function health() {
   try {
     const h = await api("/api/health");
+    state.mock = !!h.mock;
+    $("mockBadge").classList.toggle("hidden", !h.mock);
     const pill = $("gpuPill");
     if (h.gpu.available) {
       pill.classList.add("ok");
       $("gpuText").textContent = `${h.gpu.name} · ${h.gpu.vram_gb}GB · ${h.gpu.compute_capability}`;
     } else {
-      pill.classList.add("bad");
-      $("gpuText").textContent = "no CUDA GPU";
+      if (!h.mock) pill.classList.add("bad");
+      $("gpuText").textContent = h.mock ? "mock — no GPU needed" : "no CUDA GPU";
     }
-    if (!h.ai_toolkit_ready) toast("ai-toolkit not found — run runpod/setup.sh", "error");
-    if (!h.hf_token_configured) toast("HF_TOKEN not set — needed for FLUX.1-dev", "error");
+    // In mock mode these warnings don't apply.
+    if (!h.mock) {
+      if (!h.ai_toolkit_ready) toast("ai-toolkit not found — run runpod/setup.sh", "error");
+      if (!h.hf_token_configured) toast("HF_TOKEN not set — needed for FLUX.1-dev", "error");
+    }
   } catch (e) { $("gpuText").textContent = "backend offline"; }
 }
 

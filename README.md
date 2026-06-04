@@ -14,6 +14,36 @@ models run on your GPU and the trained `.safetensors` are yours.
 └──────────┘   └──────────┘   └──────────┘   └──────────┘
 ```
 
+## Try it now (mock mode — no GPU, no downloads)
+
+Want to click through the entire flow before paying for a GPU or downloading 24 GB
+of model? Run in **mock mode**: captioning, training, and generation are stubbed
+with placeholders, so the whole UI works on a plain laptop or in **GitHub
+Codespaces** with ~30 MB of dependencies.
+
+**GitHub Codespaces (easiest):** open this repo → **Code ▸ Codespaces ▸ Create
+codespace**. The dev container installs the light deps and sets `MOCK=true`
+automatically. Then in the terminal:
+
+```bash
+python -m backend.main          # opens the forwarded port 8000
+```
+
+**Local (laptop, no Docker):**
+
+```bash
+pip install -r requirements-dev.txt
+MOCK=true python -m backend.main     # http://localhost:8000
+```
+
+You'll see a **MOCK MODE** badge in the top bar. Create a project, drop in a few
+photos, auto-caption, "train" (simulated progress), and generate placeholder
+images — exercising every screen. The same `.devcontainer/` opens locally via
+VS Code **Dev Containers: Reopen in Container**, so moving off Codespaces is a
+one-click affair. When you're on a real GPU box, set `MOCK=false` and install
+`requirements.txt` — same UI, real models. See [`runpod/README.md`](runpod/README.md)
+for renting a 5090 (incl. billing) or running on your own PC.
+
 ## What's in here
 
 | Path | Purpose |

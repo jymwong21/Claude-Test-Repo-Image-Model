@@ -82,7 +82,9 @@ class TrainingManager:
             raise RuntimeError("A training job is already running.")
 
         config_path = train_mod.build_training_config(params)
-        cmd = train_mod.build_command(config_path)
+        # build_command() raises if ai-toolkit isn't installed (e.g. in Codespaces),
+        # so only resolve it for the real path.
+        cmd = None if settings.mock else train_mod.build_command(config_path)
 
         paths.ensure()
         log_path = paths.jobs / f"{params.project}-{int(time.time())}.log"
@@ -95,7 +97,52 @@ class TrainingManager:
         )
         self._job = job
 
-        def _run() -> None:
+        def _emit(logf, line: str) -> None:
+            logf.write(line + "\n")
+            logf.flush()
+            with job._lock:
+                job._lines.append(line)
+                if len(job._lines) > 2000:
+                    del job._lines[:1000]
+
+        def _run_mock() -> None:
+            """Simulate a training run end-to-end (no GPU, no ai-toolkit)."""
+            try:
+                with open(log_path, "w", encoding="utf-8") as logf:
+                    _emit(logf, f"[mock] starting training for '{params.project}'")
+                    _emit(logf, f"[mock] trigger='{params.trigger_word}' rank={params.rank} lr={params.learning_rate}")
+                    _emit(logf, "[mock] loading FLUX.1-dev (simulated)…")
+                    _emit(logf, "[mock] caching latents to disk…")
+                    ticks = 24
+                    for t in range(1, ticks + 1):
+                        if job.status == Status.CANCELLED:
+                            _emit(logf, "[mock] cancelled by user")
+                            return
+                        time.sleep(0.8)
+                        job.step = round(job.total_steps * t / ticks)
+                        loss = max(0.04, 0.6 - 0.5 * t / ticks)
+                        _emit(logf, f"[mock] step {job.step}/{job.total_steps} loss={loss:.3f}")
+                        if t % 6 == 0:
+                            _emit(logf, f"[mock] saved checkpoint at step {job.step}")
+                    # Write a placeholder LoRA so it appears in the gallery/selector.
+                    out_dir = paths.project_output(params.project)
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    placeholder = out_dir / f"{params.project}.safetensors"
+                    placeholder.write_text(
+                        "MOCK LoRA placeholder — train on a real GPU to produce weights.\n",
+                        encoding="utf-8",
+                    )
+                    _emit(logf, f"[mock] wrote {placeholder.name}")
+                    _emit(logf, "[mock] training complete ✓")
+                job.status = Status.COMPLETED
+                job.step = job.total_steps
+            except Exception as exc:  # noqa: BLE001
+                job.status = Status.FAILED
+                job.error = str(exc)
+            finally:
+                job.ended_at = time.time()
+
+        def _run_real() -> None:
             try:
                 with open(log_path, "w", encoding="utf-8") as logf:
                     proc = subprocess.Popen(
@@ -133,16 +180,18 @@ class TrainingManager:
             finally:
                 job.ended_at = time.time()
 
-        self._thread = threading.Thread(target=_run, daemon=True)
+        self._thread = threading.Thread(
+            target=_run_mock if settings.mock else _run_real, daemon=True)
         self._thread.start()
         return job
 
     def cancel(self) -> bool:
-        if self._job and self._job._proc and self._job.status == Status.RUNNING:
-            self._job.status = Status.CANCELLED
+        if not (self._job and self._job.status == Status.RUNNING):
+            return False
+        self._job.status = Status.CANCELLED  # mock loop polls this flag
+        if self._job._proc:
             self._job._proc.terminate()
-            return True
-        return False
+        return True
 
 
 # ── Captioning ────────────────────────────────────────────────────────────────

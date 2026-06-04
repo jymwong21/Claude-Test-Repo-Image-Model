@@ -1,0 +1,28 @@
+{
+  "name": "Flux LoRA Studio (mock/dev)",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11",
+
+  // Mock mode by default so Codespaces (and local Dev Containers) run the full
+  // UI with zero model downloads and no GPU. Flip to "false" on a real GPU box.
+  "containerEnv": {
+    "MOCK": "true",
+    "DATA_DIR": "${containerWorkspaceFolder}/data"
+  },
+
+  // Only the lightweight web deps — no torch/diffusers (~30 MB total).
+  "postCreateCommand": "pip install --user -r requirements-dev.txt",
+
+  "forwardPorts": [8000],
+  "portsAttributes": {
+    "8000": {
+      "label": "Flux LoRA Studio UI",
+      "onAutoForward": "openPreview"
+    }
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-python.python"]
+    }
+  }
+}

@@ -37,6 +37,10 @@ code { font-family: "SF Mono", "Fira Code", monospace; background: var(--bg-2);
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; }
 .brand-mark { font-size: 22px; background: var(--accent-grad);
   -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.topbar-right { display: flex; align-items: center; gap: 12px; }
+.mock-badge { font-size: 12px; font-weight: 700; letter-spacing: .04em;
+  color: #ffd27d; background: rgba(255, 180, 60, .12); border: 1px solid rgba(255, 180, 60, .4);
+  padding: 6px 12px; border-radius: 999px; }
 .gpu-pill { display: flex; align-items: center; gap: 8px; font-size: 13px;
   color: var(--muted); background: var(--panel); padding: 6px 12px;
   border-radius: 999px; border: 1px solid var(--border); }
