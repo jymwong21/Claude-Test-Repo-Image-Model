@@ -1,0 +1,76 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# ai-toolkit base config — Flux.1-dev LoRA on a single RTX 5090 (32 GB).
+#
+# This is a TEMPLATE. pipeline/train.py loads it, overrides the fields marked
+# "# overridden by train.py" with the project's values, writes the result to
+# DATA_DIR/configs/<project>.yaml, and runs:
+#     python ai-toolkit/run.py DATA_DIR/configs/<project>.yaml
+#
+# Defaults are tuned for a personal/character LoRA (15–30 images). 32 GB is
+# enough to train Flux.1-dev with quantize:true + gradient checkpointing without
+# offloading, so training stays fast.
+# ──────────────────────────────────────────────────────────────────────────────
+job: extension
+config:
+  name: "flux_lora"                       # overridden by train.py (project name)
+  process:
+    - type: "sd_trainer"
+      training_folder: "output"           # overridden by train.py (project output dir)
+      device: "cuda:0"
+      trigger_word: null                  # overridden by train.py (e.g. "ohwx person")
+      performance_log_every: 50
+
+      network:
+        type: "lora"
+        linear: 16                        # LoRA rank (overridden by train.py)
+        linear_alpha: 16                  # usually == rank (overridden by train.py)
+
+      save:
+        dtype: "float16"
+        save_every: 250                   # overridden by train.py
+        max_step_saves_to_keep: 4
+        push_to_hub: false
+
+      datasets:
+        - folder_path: "PLACEHOLDER"      # overridden by train.py (project dataset dir)
+          caption_ext: "txt"
+          caption_dropout_rate: 0.05
+          shuffle_tokens: false
+          cache_latents_to_disk: true
+          resolution: [512, 768, 1024]    # multi-resolution buckets
+
+      train:
+        batch_size: 1
+        steps: 2000                       # overridden by train.py
+        gradient_accumulation_steps: 1
+        train_unet: true
+        train_text_encoder: false         # Flux text encoders are frozen for LoRA
+        gradient_checkpointing: true
+        noise_scheduler: "flowmatch"
+        optimizer: "adamw8bit"
+        lr: 1e-4                           # overridden by train.py
+        ema_config:
+          use_ema: true
+          ema_decay: 0.99
+        dtype: "bf16"
+
+      model:
+        name_or_path: "black-forest-labs/FLUX.1-dev"   # overridden by train.py (BASE_MODEL)
+        is_flux: true
+        quantize: true                    # 8-bit base weights — fits 32 GB with headroom
+
+      sample:
+        sampler: "flowmatch"
+        sample_every: 250                 # overridden by train.py
+        width: 1024
+        height: 1024
+        prompts: []                       # overridden by train.py (uses trigger word)
+        neg: ""
+        seed: 42
+        walk_seed: true
+        guidance_scale: 4
+        sample_steps: 20
+
+meta:
+  name: "flux_lora"                       # overridden by train.py
+  version: "1.0"

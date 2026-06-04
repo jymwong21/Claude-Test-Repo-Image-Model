@@ -3,168 +3,211 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Portrait Studio — AI Image Generator</title>
+  <title>Flux LoRA Studio</title>
   <link rel="stylesheet" href="/assets/style.css" />
 </head>
 <body>
-
-  <!-- Navbar -->
-  <nav class="navbar">
-    <div class="nav-inner">
-      <span class="nav-logo">🎭 Portrait Studio</span>
-      <div class="nav-status" id="navStatus">
-        <span class="status-dot"></span>
-        <span class="status-text">Checking APIs…</span>
-      </div>
+  <!-- Top bar -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">◈</span>
+      <span class="brand-name">Flux LoRA Studio</span>
     </div>
-  </nav>
-
-  <!-- Hero -->
-  <header class="hero">
-    <div class="hero-inner">
-      <h1 class="hero-title">
-        <span class="gradient-text">Generate Art</span><br />of Yourself
-      </h1>
-      <p class="hero-sub">
-        Upload a photo · Choose a style · Watch Claude craft your portrait
-      </p>
+    <div class="gpu-pill" id="gpuPill">
+      <span class="dot"></span><span id="gpuText">checking GPU…</span>
     </div>
   </header>
 
-  <!-- Step 1: Upload -->
-  <main class="container">
-    <section id="step1" class="card step-card">
-      <div class="step-header">
-        <span class="step-badge">01</span>
-        <div>
-          <h2 class="step-title">Upload Your Photo</h2>
-          <p class="step-desc">Claude will analyze your appearance to capture your unique features.</p>
-        </div>
-      </div>
-
-      <div class="upload-area" id="uploadArea">
-        <input type="file" id="fileInput" accept="image/*" hidden />
-        <div class="upload-placeholder" id="uploadPlaceholder">
-          <div class="upload-icon">📸</div>
-          <p class="upload-primary">Drop your photo here</p>
-          <p class="upload-secondary">or <button class="link-btn" id="browseBtn">browse files</button></p>
-          <p class="upload-hint">JPG, PNG, WebP · max 10 MB</p>
-        </div>
-        <div class="upload-preview hidden" id="uploadPreview">
-          <img id="previewImg" src="" alt="Your photo" />
-          <button class="btn btn-ghost remove-photo" id="removePhotoBtn">✕ Remove</button>
-        </div>
-      </div>
-
-      <button class="btn btn-primary" id="analyzeBtn" disabled>
-        <span>Analyze My Photo</span>
-        <span class="btn-arrow">→</span>
+  <div class="layout">
+    <!-- Step rail -->
+    <nav class="rail">
+      <button class="rail-step active" data-step="1">
+        <span class="rail-num">1</span><span class="rail-label">Dataset</span>
       </button>
-    </section>
-
-    <!-- Step 2: Customize -->
-    <section id="step2" class="card step-card hidden">
-      <div class="step-header">
-        <span class="step-badge">02</span>
-        <div>
-          <h2 class="step-title">Customize Your Portrait</h2>
-          <p class="step-desc">Adjust the AI-generated appearance description and choose your style.</p>
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label class="form-label" for="appearanceInput">Appearance Description
-          <span class="label-hint">Edit to fine-tune Claude's analysis</span>
-        </label>
-        <textarea id="appearanceInput" class="form-textarea" rows="5"
-          placeholder="Your appearance description will appear here after photo analysis…"></textarea>
-      </div>
-
-      <div class="form-group">
-        <label class="form-label">Art Style</label>
-        <div class="style-grid" id="styleGrid"><!-- populated by JS --></div>
-      </div>
-
-      <div class="form-group">
-        <label class="form-label" for="sceneInput">Scene / Setting
-          <span class="label-hint">Where should your portrait take place?</span>
-        </label>
-        <textarea id="sceneInput" class="form-textarea" rows="3"
-          placeholder="e.g. Standing on a misty mountain peak at golden hour, wind in hair…"></textarea>
-      </div>
-
-      <div class="form-group">
-        <label class="form-label" for="detailsInput">Additional Details
-          <span class="label-hint">Optional — clothing, mood, props, lighting</span>
-        </label>
-        <input type="text" id="detailsInput" class="form-input"
-          placeholder="e.g. wearing a leather jacket, smiling confidently" />
-      </div>
-
-      <div class="form-group">
-        <label class="form-label">Orientation</label>
-        <div class="orientation-group">
-          <label class="orientation-option">
-            <input type="radio" name="orientation" value="1024x1024" checked />
-            <span class="orientation-card">
-              <span class="orientation-icon square-icon"></span>
-              <span>Square</span>
-            </span>
-          </label>
-          <label class="orientation-option">
-            <input type="radio" name="orientation" value="1792x1024" />
-            <span class="orientation-card">
-              <span class="orientation-icon landscape-icon"></span>
-              <span>Landscape</span>
-            </span>
-          </label>
-          <label class="orientation-option">
-            <input type="radio" name="orientation" value="1024x1792" />
-            <span class="orientation-card">
-              <span class="orientation-icon portrait-icon"></span>
-              <span>Portrait</span>
-            </span>
-          </label>
-        </div>
-      </div>
-
-      <button class="btn btn-generate" id="generateBtn" disabled>
-        <span>✨ Generate My Portrait</span>
+      <button class="rail-step" data-step="2">
+        <span class="rail-num">2</span><span class="rail-label">Caption</span>
       </button>
-    </section>
+      <button class="rail-step" data-step="3">
+        <span class="rail-num">3</span><span class="rail-label">Train</span>
+      </button>
+      <button class="rail-step" data-step="4">
+        <span class="rail-num">4</span><span class="rail-label">Generate</span>
+      </button>
+    </nav>
 
-    <!-- Gallery -->
-    <section id="gallery" class="gallery-section hidden">
-      <h2 class="gallery-title">Your Generated Portraits</h2>
-      <div class="gallery-grid" id="galleryGrid"><!-- populated by JS --></div>
-    </section>
-  </main>
+    <main class="content">
+      <!-- Project selector (always visible) -->
+      <div class="project-bar">
+        <label class="project-label">Project</label>
+        <select id="projectSelect" class="select"></select>
+        <button class="btn btn-ghost" id="newProjectBtn">+ New</button>
+        <span class="project-meta" id="projectMeta"></span>
+      </div>
+
+      <!-- ── Step 1: Dataset ── -->
+      <section class="panel active" id="panel-1">
+        <h1 class="panel-title">Build your dataset</h1>
+        <p class="panel-sub">Upload 15–30 varied photos of your subject — different
+          angles, lighting, and expressions. Close-ups and half-body shots work best.</p>
+
+        <div class="dropzone" id="dropzone">
+          <input type="file" id="fileInput" accept="image/*" multiple hidden />
+          <div class="dz-inner">
+            <div class="dz-icon">⬆</div>
+            <p class="dz-primary">Drop photos here</p>
+            <p class="dz-sub">or <button class="link" id="browseBtn">browse files</button> · JPG / PNG / WebP</p>
+          </div>
+        </div>
+
+        <div class="thumb-grid" id="thumbGrid"></div>
+        <div class="panel-actions">
+          <button class="btn btn-primary" id="toCaptionBtn" disabled>Continue to captioning →</button>
+        </div>
+      </section>
+
+      <!-- ── Step 2: Caption ── -->
+      <section class="panel" id="panel-2">
+        <h1 class="panel-title">Caption your images</h1>
+        <p class="panel-sub">Pick a <b>trigger word</b> — a rare token you'll use in
+          prompts to summon your subject. Florence-2 describes each photo; the trigger
+          is prepended automatically. Review and tweak below.</p>
+
+        <div class="form-row">
+          <div class="field">
+            <label class="field-label">Trigger word</label>
+            <input class="input" id="triggerInput" value="ohwx person" />
+            <span class="field-hint">e.g. <code>ohwx person</code>, <code>sks man</code></span>
+          </div>
+          <label class="checkbox">
+            <input type="checkbox" id="overwriteCaptions" /> Overwrite existing captions
+          </label>
+          <button class="btn btn-primary" id="captionBtn">✨ Auto-caption all</button>
+        </div>
+
+        <div class="progress hidden" id="captionProgress">
+          <div class="progress-bar"><div class="progress-fill" id="captionFill"></div></div>
+          <span class="progress-text" id="captionText"></span>
+        </div>
+
+        <div class="caption-list" id="captionList"></div>
+        <div class="panel-actions">
+          <button class="btn btn-primary" id="toTrainBtn" disabled>Continue to training →</button>
+        </div>
+      </section>
+
+      <!-- ── Step 3: Train ── -->
+      <section class="panel" id="panel-3">
+        <h1 class="panel-title">Train your LoRA</h1>
+        <p class="panel-sub">Defaults are tuned for a personal LoRA on a 5090. More
+          steps = stronger likeness but longer + risk of overfitting.</p>
+
+        <div class="train-grid">
+          <div class="field">
+            <label class="field-label">Trigger word</label>
+            <input class="input" id="trainTrigger" value="ohwx person" />
+          </div>
+          <div class="field">
+            <label class="field-label">Steps <span id="stepsVal" class="val">2000</span></label>
+            <input type="range" id="stepsRange" min="500" max="4000" step="100" value="2000" />
+          </div>
+          <div class="field">
+            <label class="field-label">Learning rate</label>
+            <select class="select" id="lrSelect">
+              <option value="0.0001" selected>1e-4 (default)</option>
+              <option value="0.0002">2e-4 (faster)</option>
+              <option value="0.00005">5e-5 (gentle)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label class="field-label">LoRA rank <span id="rankVal" class="val">16</span></label>
+            <input type="range" id="rankRange" min="8" max="64" step="8" value="16" />
+          </div>
+        </div>
+
+        <div class="panel-actions">
+          <button class="btn btn-generate" id="trainBtn">🚀 Start training</button>
+          <button class="btn btn-ghost hidden" id="cancelTrainBtn">Cancel</button>
+        </div>
+
+        <div class="train-monitor hidden" id="trainMonitor">
+          <div class="monitor-head">
+            <span class="monitor-status" id="trainStatusBadge">running</span>
+            <span class="monitor-step" id="trainStepText"></span>
+          </div>
+          <div class="progress"><div class="progress-bar">
+            <div class="progress-fill" id="trainFill"></div></div></div>
+          <pre class="log" id="trainLog"></pre>
+        </div>
+      </section>
+
+      <!-- ── Step 4: Generate ── -->
+      <section class="panel" id="panel-4">
+        <h1 class="panel-title">Generate</h1>
+        <p class="panel-sub">Use your trigger word in the prompt to bring your subject in.</p>
+
+        <div class="gen-layout">
+          <div class="gen-controls">
+            <div class="field">
+              <label class="field-label">LoRA</label>
+              <select class="select" id="loraSelect"></select>
+            </div>
+            <div class="field">
+              <label class="field-label">Prompt</label>
+              <textarea class="textarea" id="genPrompt" rows="4"
+                placeholder="ohwx person as a renaissance oil painting, dramatic light…"></textarea>
+            </div>
+            <div class="field">
+              <label class="field-label">LoRA strength <span id="scaleVal" class="val">1.0</span></label>
+              <input type="range" id="scaleRange" min="0" max="1.5" step="0.05" value="1.0" />
+            </div>
+            <div class="gen-row">
+              <div class="field">
+                <label class="field-label">Steps <span id="genStepsVal" class="val">28</span></label>
+                <input type="range" id="genStepsRange" min="10" max="50" step="1" value="28" />
+              </div>
+              <div class="field">
+                <label class="field-label">Guidance <span id="guidanceVal" class="val">3.5</span></label>
+                <input type="range" id="guidanceRange" min="1" max="7" step="0.5" value="3.5" />
+              </div>
+            </div>
+            <div class="field">
+              <label class="field-label">Aspect</label>
+              <div class="seg" id="aspectSeg">
+                <button class="seg-btn active" data-w="1024" data-h="1024">Square</button>
+                <button class="seg-btn" data-w="1344" data-h="768">Landscape</button>
+                <button class="seg-btn" data-w="768" data-h="1344">Portrait</button>
+              </div>
+            </div>
+            <button class="btn btn-generate" id="genBtn">✨ Generate</button>
+          </div>
+
+          <div class="gen-gallery">
+            <h2 class="gallery-title">Gallery</h2>
+            <div class="gallery-grid" id="galleryGrid"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
 
   <!-- Loading overlay -->
-  <div class="loading-overlay hidden" id="loadingOverlay">
-    <div class="loading-card">
+  <div class="overlay hidden" id="overlay">
+    <div class="overlay-card">
       <div class="spinner"></div>
-      <p class="loading-title" id="loadingTitle">Working…</p>
-      <p class="loading-sub" id="loadingSub">Please wait</p>
+      <p id="overlayText">Working…</p>
     </div>
   </div>
 
-  <!-- Toast container -->
-  <div class="toast-container" id="toastContainer"></div>
+  <!-- Toasts -->
+  <div class="toasts" id="toasts"></div>
 
   <!-- Lightbox -->
   <div class="lightbox hidden" id="lightbox">
-    <div class="lightbox-backdrop" id="lightboxBackdrop"></div>
+    <div class="lightbox-bg" id="lightboxBg"></div>
     <div class="lightbox-panel">
       <button class="lightbox-close" id="lightboxClose">✕</button>
-      <img class="lightbox-img" id="lightboxImg" src="" alt="Generated portrait" />
-      <div class="lightbox-meta">
-        <p class="lightbox-style" id="lightboxStyle"></p>
-        <p class="lightbox-prompt" id="lightboxPrompt"></p>
-        <a class="btn btn-primary lightbox-download" id="lightboxDownload" download>
-          ⬇ Download
-        </a>
-      </div>
+      <img id="lightboxImg" src="" alt="" />
+      <a class="btn btn-primary" id="lightboxDownload" download>⬇ Download</a>
     </div>
   </div>
 

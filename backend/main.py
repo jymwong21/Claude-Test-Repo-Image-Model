@@ -1,267 +1,321 @@
-import os
-import uuid
-import base64
+"""Flux LoRA Studio — FastAPI backend.
+
+Serves the web UI and exposes the pipeline as a small JSON API:
+  projects → dataset upload → caption → train (live progress) → generate.
+
+Run on the pod with:  python -m backend.main
+"""
+from __future__ import annotations
+
+import asyncio
+import re
+import shutil
+import tempfile
+import time
 from pathlib import Path
 from typing import Optional
 
 import aiofiles
-import anthropic
-import httpx
-from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from openai import AsyncOpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-load_dotenv()
+from pipeline import caption as caption_mod
+from pipeline import inference
+from pipeline import prepare_dataset
+from pipeline import train as train_mod
+from pipeline.config import REPO_ROOT, paths, settings
 
-app = FastAPI(title="Portrait Studio")
+from .jobs import Status, caption_manager, training_manager
 
-BASE_DIR = Path(__file__).parent
-FRONTEND_DIR = BASE_DIR.parent / "frontend"
-UPLOAD_DIR = BASE_DIR / "uploads"
-GENERATED_DIR = BASE_DIR / "generated"
+app = FastAPI(title="Flux LoRA Studio")
 
-UPLOAD_DIR.mkdir(exist_ok=True)
-GENERATED_DIR.mkdir(exist_ok=True)
+FRONTEND_DIR = REPO_ROOT / "frontend"
+_PROJECT_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
-STYLES = {
-    "realistic": {
-        "name": "Photorealistic",
-        "description": "Ultra-detailed, lifelike photography",
-        "emoji": "📷",
-        "prompt_suffix": "photorealistic, 8K resolution, professional photography, natural lighting, detailed skin texture, bokeh background",
-    },
-    "oil_painting": {
-        "name": "Oil Painting",
-        "description": "Classic fine art with rich brushwork",
-        "emoji": "🖼️",
-        "prompt_suffix": "oil painting, impasto technique, rich textured brushstrokes, museum quality, old masters style, dramatic chiaroscuro lighting",
-    },
-    "watercolor": {
-        "name": "Watercolor",
-        "description": "Soft, translucent washes of color",
-        "emoji": "🎨",
-        "prompt_suffix": "watercolor painting, soft flowing washes, transparent layers, delicate paper texture, wet on wet technique, luminous colors",
-    },
-    "anime": {
-        "name": "Anime",
-        "description": "Japanese animation style",
-        "emoji": "⛩️",
-        "prompt_suffix": "anime art style, Studio Ghibli inspired, detailed cel shading, vibrant colors, expressive eyes, clean linework",
-    },
-    "digital_art": {
-        "name": "Digital Art",
-        "description": "Modern digital illustration",
-        "emoji": "💻",
-        "prompt_suffix": "digital art, concept art, ArtStation trending, detailed digital painting, professional illustration, vibrant colors",
-    },
-    "pencil_sketch": {
-        "name": "Pencil Sketch",
-        "description": "Hand-drawn graphite artwork",
-        "emoji": "✏️",
-        "prompt_suffix": "pencil sketch, graphite drawing, cross-hatching technique, detailed linework, shading gradients, sketchbook style",
-    },
-    "pop_art": {
-        "name": "Pop Art",
-        "description": "Bold Warhol-inspired graphics",
-        "emoji": "🔴",
-        "prompt_suffix": "pop art style, Andy Warhol inspired, bold flat colors, halftone dots, high contrast, graphic design aesthetic",
-    },
-    "fantasy": {
-        "name": "Fantasy",
-        "description": "Magical and mystical artwork",
-        "emoji": "🧙",
-        "prompt_suffix": "fantasy art style, magical atmosphere, ethereal lighting, mystical elements, epic fantasy illustration, detailed environment",
-    },
-    "cinematic": {
-        "name": "Cinematic",
-        "description": "Movie-quality dramatic scenes",
-        "emoji": "🎬",
-        "prompt_suffix": "cinematic photography, movie still, dramatic lighting, film grain, anamorphic lens flare, color graded, epic composition",
-    },
-    "vintage": {
-        "name": "Vintage",
-        "description": "Retro and nostalgic aesthetic",
-        "emoji": "📻",
-        "prompt_suffix": "vintage photography, 1970s aesthetic, film grain, faded colors, warm tones, retro filter, nostalgic atmosphere",
-    },
-    "cyberpunk": {
-        "name": "Cyberpunk",
-        "description": "Neon-lit futuristic dystopia",
-        "emoji": "🤖",
-        "prompt_suffix": "cyberpunk art style, neon lights, futuristic city, rain-slicked streets, holographic displays, Blade Runner aesthetic, purple and cyan tones",
-    },
-    "impressionist": {
-        "name": "Impressionist",
-        "description": "Monet-style light and color",
-        "emoji": "🌸",
-        "prompt_suffix": "impressionist painting, Monet style, loose visible brushstrokes, captured light and movement, vibrant dabs of color, plein air feeling",
-    },
-}
+
+def _valid_project(name: str) -> str:
+    if not _PROJECT_RE.match(name):
+        raise HTTPException(400, "Project name must be 1–64 chars: letters, digits, - or _")
+    return name
+
+
+@app.on_event("startup")
+async def _startup() -> None:
+    paths.ensure()
+
+
+# ── Models ────────────────────────────────────────────────────────────────────
+
+class CreateProject(BaseModel):
+    name: str
+
+
+class CaptionRequest(BaseModel):
+    trigger_word: str = "ohwx person"
+    overwrite: bool = False
+
+
+class EditCaption(BaseModel):
+    caption: str
+
+
+class TrainRequest(BaseModel):
+    trigger_word: str = "ohwx person"
+    steps: int = Field(2000, ge=200, le=6000)
+    learning_rate: float = Field(1e-4, gt=0, le=1e-2)
+    rank: int = Field(16, ge=4, le=128)
 
 
 class GenerateRequest(BaseModel):
-    appearance_description: str
-    style: str
-    scene_prompt: str
-    additional_details: Optional[str] = ""
-    image_size: Optional[str] = "1024x1024"
+    prompt: str
+    lora: Optional[str] = None        # path to a .safetensors, or None for base model
+    lora_scale: float = Field(1.0, ge=0, le=2)
+    width: int = Field(1024, ge=512, le=1536)
+    height: int = Field(1024, ge=512, le=1536)
+    steps: int = Field(28, ge=4, le=50)
+    guidance_scale: float = Field(3.5, ge=0, le=10)
+    seed: Optional[int] = None
 
 
-@app.get("/api/styles")
-async def get_styles():
-    return STYLES
+# ── Health ────────────────────────────────────────────────────────────────────
 
-
-@app.post("/api/analyze")
-async def analyze_photo(photo: UploadFile = File(...)):
-    if not photo.content_type or not photo.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="File must be an image")
-
-    contents = await photo.read()
-    if len(contents) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Image must be under 10MB")
-
-    photo_id = str(uuid.uuid4())
-    ext = Path(photo.filename or "photo.jpg").suffix or ".jpg"
-    save_path = UPLOAD_DIR / f"{photo_id}{ext}"
-    async with aiofiles.open(save_path, "wb") as f:
-        await f.write(contents)
-
-    b64_image = base64.standard_b64encode(contents).decode("utf-8")
-    media_type = photo.content_type or "image/jpeg"
-
-    client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-    message = client.messages.create(
-        model="claude-opus-4-8",
-        max_tokens=512,
-        thinking={"type": "adaptive"},
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": media_type,
-                            "data": b64_image,
-                        },
-                    },
-                    {
-                        "type": "text",
-                        "text": (
-                            "Analyze this person's appearance and write a detailed, flowing description "
-                            "of approximately 120 words for use in AI image generation. Cover: face shape, "
-                            "eye color and shape, hair color/style/length, skin tone, nose shape, lip fullness, "
-                            "estimated age range, and any distinctive features (freckles, dimples, facial hair, etc.). "
-                            "Write in third person, present tense. Be specific and descriptive. "
-                            "Output ONLY the description — no preamble, no labels, no commentary."
-                        ),
-                    },
-                ],
+@app.get("/api/health")
+async def health() -> dict:
+    gpu = {"available": False}
+    try:
+        import torch
+        if torch.cuda.is_available():
+            cap = torch.cuda.get_device_capability(0)
+            gpu = {
+                "available": True,
+                "name": torch.cuda.get_device_name(0),
+                "compute_capability": f"sm_{cap[0]}{cap[1]}",
+                "vram_gb": round(torch.cuda.get_device_properties(0).total_memory / 1e9, 1),
+                "torch": torch.__version__,
             }
-        ],
+    except Exception:  # noqa: BLE001
+        pass
+    return {
+        "status": "ok",
+        "gpu": gpu,
+        "hf_token_configured": bool(settings.hf_token),
+        "ai_toolkit_ready": (settings.ai_toolkit_dir / "run.py").exists(),
+        "base_model": settings.base_model,
+    }
+
+
+# ── Projects & dataset ────────────────────────────────────────────────────────
+
+@app.get("/api/projects")
+async def list_projects() -> list[dict]:
+    out = []
+    if paths.datasets.exists():
+        for d in sorted(paths.datasets.iterdir()):
+            if not d.is_dir():
+                continue
+            images = [p for p in d.iterdir() if p.suffix.lower() in
+                      {".png", ".jpg", ".jpeg", ".webp"}]
+            captioned = sum(1 for p in images if p.with_suffix(".txt").exists())
+            out.append({
+                "name": d.name,
+                "image_count": len(images),
+                "captioned_count": captioned,
+                "lora_count": len(_list_project_loras(d.name)),
+            })
+    return out
+
+
+@app.post("/api/projects")
+async def create_project(body: CreateProject) -> dict:
+    name = _valid_project(body.name)
+    paths.project_dataset(name).mkdir(parents=True, exist_ok=True)
+    return {"name": name}
+
+
+@app.post("/api/projects/{project}/images")
+async def upload_images(project: str, files: list[UploadFile] = File(...)) -> dict:
+    _valid_project(project)
+    tmp = Path(tempfile.mkdtemp(prefix="flux-upload-"))
+    try:
+        for f in files:
+            if not f.content_type or not f.content_type.startswith("image/"):
+                continue
+            dest = tmp / Path(f.filename or "img").name
+            async with aiofiles.open(dest, "wb") as out:
+                await out.write(await f.read())
+        result = prepare_dataset.prepare(tmp, project)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return result
+
+
+@app.get("/api/projects/{project}/dataset")
+async def get_dataset(project: str) -> dict:
+    _valid_project(project)
+    return {"project": project, "items": caption_mod.read_captions(project)}
+
+
+@app.delete("/api/projects/{project}/images/{image_name}")
+async def delete_image(project: str, image_name: str) -> dict:
+    _valid_project(project)
+    img = paths.project_dataset(project) / Path(image_name).name
+    if img.exists():
+        img.unlink()
+        img.with_suffix(".txt").unlink(missing_ok=True)
+        return {"deleted": image_name}
+    raise HTTPException(404, "Image not found")
+
+
+# ── Captioning ────────────────────────────────────────────────────────────────
+
+@app.post("/api/projects/{project}/caption")
+async def start_caption(project: str, body: CaptionRequest) -> dict:
+    _valid_project(project)
+    try:
+        job = caption_manager.start(project, body.trigger_word, body.overwrite)
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc))
+    return job.to_dict()
+
+
+@app.get("/api/caption/status")
+async def caption_status() -> dict:
+    job = caption_manager.job
+    return job.to_dict() if job else {"status": Status.IDLE.value}
+
+
+@app.put("/api/projects/{project}/caption/{image_name}")
+async def edit_caption(project: str, image_name: str, body: EditCaption) -> dict:
+    _valid_project(project)
+    caption_mod.write_caption(project, Path(image_name).name, body.caption)
+    return {"image": image_name, "caption": body.caption}
+
+
+# ── Training ──────────────────────────────────────────────────────────────────
+
+@app.post("/api/projects/{project}/train")
+async def start_train(project: str, body: TrainRequest) -> dict:
+    _valid_project(project)
+    items = caption_mod.read_captions(project)
+    if not items:
+        raise HTTPException(400, "No images in dataset — upload photos first.")
+    if any(not it["caption"] for it in items):
+        raise HTTPException(400, "Some images are uncaptioned — run captioning first.")
+
+    params = train_mod.TrainParams(
+        project=project,
+        trigger_word=body.trigger_word,
+        steps=body.steps,
+        learning_rate=body.learning_rate,
+        rank=body.rank,
     )
+    try:
+        job = training_manager.start(params)
+    except (RuntimeError, FileNotFoundError) as exc:
+        raise HTTPException(409, str(exc))
+    return job.to_dict()
 
-    appearance_description = ""
-    for block in message.content:
-        if block.type == "text":
-            appearance_description = block.text.strip()
-            break
 
-    return {"photo_id": photo_id, "appearance_description": appearance_description}
+@app.get("/api/train/status")
+async def train_status() -> dict:
+    job = training_manager.job
+    if not job:
+        return {"status": Status.IDLE.value}
+    data = job.to_dict()
+    data["log_tail"] = job.tail(60)
+    return data
+
+
+@app.post("/api/train/cancel")
+async def train_cancel() -> dict:
+    return {"cancelled": training_manager.cancel()}
+
+
+# ── LoRAs & generation ────────────────────────────────────────────────────────
+
+def _list_project_loras(project: str) -> list[dict]:
+    out_dir = paths.project_output(project)
+    if not out_dir.exists():
+        return []
+    loras = []
+    for sf in sorted(out_dir.rglob("*.safetensors")):
+        loras.append({
+            "project": project,
+            "name": sf.stem,
+            "path": str(sf),
+            "size_mb": round(sf.stat().st_size / 1e6, 1),
+            "modified": sf.stat().st_mtime,
+        })
+    return loras
+
+
+@app.get("/api/loras")
+async def list_loras() -> list[dict]:
+    out = []
+    if paths.output.exists():
+        for d in sorted(paths.output.iterdir()):
+            if d.is_dir():
+                out.extend(_list_project_loras(d.name))
+    out.sort(key=lambda x: x["modified"], reverse=True)
+    return out
 
 
 @app.post("/api/generate")
-async def generate_image(request: GenerateRequest):
-    if request.style not in STYLES:
-        raise HTTPException(status_code=400, detail=f"Unknown style: {request.style}")
-
-    valid_sizes = ["1024x1024", "1792x1024", "1024x1792"]
-    image_size = request.image_size if request.image_size in valid_sizes else "1024x1024"
-
-    style_info = STYLES[request.style]
-
-    claude_client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-    prompt_msg = claude_client.messages.create(
-        model="claude-opus-4-8",
-        max_tokens=512,
-        thinking={"type": "adaptive"},
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    f"Create an optimized DALL-E 3 image generation prompt. Combine these inputs:\n\n"
-                    f"PERSON'S APPEARANCE: {request.appearance_description}\n\n"
-                    f"SCENE/SETTING: {request.scene_prompt}\n\n"
-                    f"ART STYLE: {style_info['name']} — {style_info['prompt_suffix']}\n\n"
-                    f"ADDITIONAL DETAILS: {request.additional_details or 'None'}\n\n"
-                    "Write a single, detailed prompt (150-200 words) that seamlessly integrates all elements. "
-                    "Emphasize the person's specific physical features so they are clearly identifiable. "
-                    "Make the scene vivid and the style explicit. "
-                    "Output ONLY the prompt text — no preamble, no labels."
-                ),
-            }
-        ],
-    )
-
-    enhanced_prompt = ""
-    for block in prompt_msg.content:
-        if block.type == "text":
-            enhanced_prompt = block.text.strip()
-            break
-
-    openai_client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-    dalle_response = await openai_client.images.generate(
-        model="dall-e-3",
-        prompt=enhanced_prompt,
-        size=image_size,
-        quality="hd",
-        style="vivid",
-        n=1,
-    )
-
-    image_data = dalle_response.data[0]
-    image_url = image_data.url
-    revised_prompt = getattr(image_data, "revised_prompt", enhanced_prompt)
-
-    image_id = str(uuid.uuid4())
-    image_path = GENERATED_DIR / f"{image_id}.png"
-
-    async with httpx.AsyncClient(timeout=60.0) as http_client:
-        img_response = await http_client.get(image_url)
-        img_response.raise_for_status()
-
-    async with aiofiles.open(image_path, "wb") as f:
-        await f.write(img_response.content)
-
-    return {
-        "image_id": image_id,
-        "image_url": f"/generated/{image_id}.png",
-        "style": request.style,
-        "style_name": style_info["name"],
-        "style_emoji": style_info["emoji"],
-        "enhanced_prompt": enhanced_prompt,
-        "revised_prompt": revised_prompt,
-    }
+async def generate(body: GenerateRequest) -> dict:
+    if training_manager.is_busy():
+        raise HTTPException(409, "Training is using the GPU — wait for it to finish.")
+    if body.lora and not Path(body.lora).exists():
+        raise HTTPException(404, "LoRA file not found.")
+    try:
+        result = await asyncio.to_thread(
+            inference.generate,
+            body.prompt,
+            lora_path=body.lora,
+            lora_scale=body.lora_scale,
+            width=body.width,
+            height=body.height,
+            steps=body.steps,
+            guidance_scale=body.guidance_scale,
+            seed=body.seed,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(500, f"Generation failed: {exc}")
+    result["url"] = f"/generated/{result['filename']}"
+    return result
 
 
-@app.get("/api/health")
-async def health():
-    return {
-        "status": "ok",
-        "anthropic_configured": bool(os.environ.get("ANTHROPIC_API_KEY")),
-        "openai_configured": bool(os.environ.get("OPENAI_API_KEY")),
-    }
+@app.get("/api/generated")
+async def list_generated() -> list[dict]:
+    if not paths.generated.exists():
+        return []
+    items = [
+        {"filename": p.name, "url": f"/generated/{p.name}", "modified": p.stat().st_mtime}
+        for p in paths.generated.glob("*.png")
+    ]
+    items.sort(key=lambda x: x["modified"], reverse=True)
+    return items
 
 
-app.mount("/generated", StaticFiles(directory=str(GENERATED_DIR)), name="generated")
+# ── Static & frontend ─────────────────────────────────────────────────────────
+
+# Ensure dirs exist before mounting (StaticFiles requires them to be present).
+paths.ensure()
+app.mount("/datasets", StaticFiles(directory=str(paths.datasets)), name="datasets")
+app.mount("/generated", StaticFiles(directory=str(paths.generated)), name="generated")
 app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIR)), name="assets")
 
 
 @app.get("/")
-async def root():
+async def root() -> FileResponse:
     return FileResponse(FRONTEND_DIR / "index.html")
+
+
+def run() -> None:
+    import uvicorn
+    uvicorn.run(app, host=settings.host, port=settings.port)
+
+
+if __name__ == "__main__":
+    run()

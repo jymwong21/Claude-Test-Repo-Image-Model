@@ -1,15 +1,40 @@
+# Python
 __pycache__/
 *.py[cod]
-*.pyo
-.env
+*.egg-info/
+.venv/
 venv/
 env/
-.venv/
-backend/uploads/
-backend/generated/
-.vscode/
-.idea/
+
+# Environment
+.env
+
+# Model weights & large artifacts (never commit these)
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.bin
+*.gguf
+
+# Project data directories
+data/datasets/
+data/captions/
+data/output/
+data/models/
+data/generated/
+uploads/
+output/
+
+# Third-party trainer (cloned at setup time on the pod)
+ai-toolkit/
+
+# Logs & jobs
+*.log
+data/jobs/
+
+# OS / editor
 .DS_Store
-*.egg-info/
-dist/
-build/
+.idea/
+.vscode/
+*.swp

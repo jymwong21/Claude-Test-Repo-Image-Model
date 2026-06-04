@@ -1,309 +1,328 @@
-'use strict';
-
-const $ = id => document.getElementById(id);
-
-const state = {
-  photoFile: null,
-  appearanceDescription: '',
-  selectedStyle: null,
-  isAnalyzing: false,
-  isGenerating: false,
-  generatedImages: [],
+/* ── Flux LoRA Studio — frontend logic ─────────────────────────────────────── */
+const $ = (id) => document.getElementById(id);
+const api = async (path, opts = {}) => {
+  const res = await fetch(path, opts);
+  if (!res.ok) {
+    let msg = res.statusText;
+    try { msg = (await res.json()).detail || msg; } catch (_) {}
+    throw new Error(msg);
+  }
+  return res.status === 204 ? null : res.json();
 };
 
-const API = {
-  async loadStyles() {
-    const res = await fetch('/api/styles');
-    if (!res.ok) throw new Error('Failed to load styles');
-    return res.json();
-  },
+const state = { project: null, captionPoll: null, trainPoll: null,
+  aspect: { w: 1024, h: 1024 } };
 
-  async analyzePhoto(file) {
-    const fd = new FormData();
-    fd.append('photo', file);
-    const res = await fetch('/api/analyze', { method: 'POST', body: fd });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || 'Analysis failed');
-    }
-    return res.json();
-  },
-
-  async generateImage(payload) {
-    const res = await fetch('/api/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || 'Generation failed');
-    }
-    return res.json();
-  },
-
-  async healthCheck() {
-    const res = await fetch('/api/health');
-    if (!res.ok) return null;
-    return res.json();
-  },
+/* ── Toasts & overlay ── */
+function toast(msg, type = "") {
+  const el = document.createElement("div");
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  $("toasts").appendChild(el);
+  setTimeout(() => el.remove(), 4200);
+}
+const overlay = (show, text = "Working…") => {
+  $("overlayText").textContent = text;
+  $("overlay").classList.toggle("hidden", !show);
 };
 
-// ===== Loading Overlay =====
-function showLoading(title, sub) {
-  $('loadingTitle').textContent = title;
-  $('loadingSub').textContent = sub;
-  $('loadingOverlay').classList.remove('hidden');
+/* ── Step navigation ── */
+function goStep(n) {
+  document.querySelectorAll(".rail-step").forEach((b) =>
+    b.classList.toggle("active", b.dataset.step == n));
+  document.querySelectorAll(".panel").forEach((p) =>
+    p.classList.toggle("active", p.id === `panel-${n}`));
+  if (n == 2) loadDataset();
+  if (n == 4) { loadLoras(); loadGallery(); }
 }
-function hideLoading() {
-  $('loadingOverlay').classList.add('hidden');
-}
+document.querySelectorAll(".rail-step").forEach((b) =>
+  b.addEventListener("click", () => goStep(b.dataset.step)));
 
-// ===== Toast =====
-function showToast(type, title, message, duration = 5000) {
-  const icons = { success: '✅', error: '❌', info: 'ℹ️', warning: '⚠️' };
-  const toast = document.createElement('div');
-  toast.className = `toast ${type}`;
-  toast.innerHTML = `
-    <span class="toast-icon">${icons[type] || 'ℹ️'}</span>
-    <div class="toast-body">
-      <p class="toast-title">${title}</p>
-      ${message ? `<p class="toast-msg">${message}</p>` : ''}
-    </div>
-  `;
-  $('toastContainer').appendChild(toast);
-  setTimeout(() => {
-    toast.classList.add('fade-out');
-    toast.addEventListener('animationend', () => toast.remove(), { once: true });
-  }, duration);
-}
-
-// ===== Style Grid =====
-function renderStyleGrid(styles) {
-  const grid = $('styleGrid');
-  grid.innerHTML = '';
-  for (const [key, info] of Object.entries(styles)) {
-    const card = document.createElement('div');
-    card.className = 'style-card';
-    card.dataset.style = key;
-    card.innerHTML = `
-      <span class="style-emoji">${info.emoji}</span>
-      <p class="style-name">${info.name}</p>
-      <p class="style-desc">${info.description}</p>
-    `;
-    card.addEventListener('click', () => selectStyle(key));
-    grid.appendChild(card);
-  }
-}
-
-function selectStyle(key) {
-  state.selectedStyle = key;
-  document.querySelectorAll('.style-card').forEach(c => {
-    c.classList.toggle('selected', c.dataset.style === key);
-  });
-  updateGenerateBtn();
-}
-
-// ===== Photo Handling =====
-function setPhoto(file) {
-  if (!file || !file.type.startsWith('image/')) {
-    showToast('error', 'Invalid file', 'Please select an image file.');
-    return;
-  }
-  if (file.size > 10 * 1024 * 1024) {
-    showToast('error', 'File too large', 'Please use an image under 10 MB.');
-    return;
-  }
-  state.photoFile = file;
-  const reader = new FileReader();
-  reader.onload = e => {
-    $('previewImg').src = e.target.result;
-    $('uploadPlaceholder').classList.add('hidden');
-    $('uploadPreview').classList.remove('hidden');
-  };
-  reader.readAsDataURL(file);
-  $('analyzeBtn').disabled = false;
-}
-
-function clearPhoto() {
-  state.photoFile = null;
-  $('fileInput').value = '';
-  $('previewImg').src = '';
-  $('uploadPlaceholder').classList.remove('hidden');
-  $('uploadPreview').classList.add('hidden');
-  $('analyzeBtn').disabled = true;
-}
-
-// ===== Analyze =====
-async function handleAnalyze() {
-  if (!state.photoFile || state.isAnalyzing) return;
-  state.isAnalyzing = true;
-  showLoading('Analyzing your photo…', 'Claude is examining your features');
+/* ── Health ── */
+async function health() {
   try {
-    const result = await API.analyzePhoto(state.photoFile);
-    state.appearanceDescription = result.appearance_description;
-    $('appearanceInput').value = result.appearance_description;
-    $('step2').classList.remove('hidden');
-    $('step2').scrollIntoView({ behavior: 'smooth', block: 'start' });
-    showToast('success', 'Analysis complete!', 'Your appearance has been captured.');
-  } catch (err) {
-    showToast('error', 'Analysis failed', err.message);
-  } finally {
-    hideLoading();
-    state.isAnalyzing = false;
-  }
-}
-
-// ===== Generate =====
-function updateGenerateBtn() {
-  const scene = $('sceneInput').value.trim();
-  const appearance = $('appearanceInput').value.trim();
-  const ready = !!state.selectedStyle && !!scene && !!appearance;
-  const btn = $('generateBtn');
-  btn.disabled = !ready;
-  btn.classList.toggle('pulsing', ready);
-}
-
-async function handleGenerate() {
-  if (!state.selectedStyle || state.isGenerating) return;
-  const appearance = $('appearanceInput').value.trim();
-  const scene = $('sceneInput').value.trim();
-  const details = $('detailsInput').value.trim();
-  const size = document.querySelector('input[name="orientation"]:checked')?.value || '1024x1024';
-
-  if (!appearance) { showToast('warning', 'Missing description', 'Please provide an appearance description.'); return; }
-  if (!scene) { showToast('warning', 'Missing scene', 'Please describe a scene or setting.'); return; }
-
-  state.isGenerating = true;
-  showLoading('Creating your portrait…', 'Claude is crafting the perfect prompt for DALL·E');
-  try {
-    const result = await API.generateImage({
-      appearance_description: appearance,
-      style: state.selectedStyle,
-      scene_prompt: scene,
-      additional_details: details,
-      image_size: size,
-    });
-    addGeneratedImage(result);
-    showToast('success', 'Portrait ready!', `Your ${result.style_name} portrait has been created.`);
-    $('gallery').classList.remove('hidden');
-    $('galleryGrid').firstElementChild?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  } catch (err) {
-    showToast('error', 'Generation failed', err.message);
-  } finally {
-    hideLoading();
-    state.isGenerating = false;
-  }
-}
-
-// ===== Gallery =====
-function addGeneratedImage(data) {
-  state.generatedImages.unshift(data);
-  const grid = $('galleryGrid');
-  const item = document.createElement('div');
-  item.className = 'gallery-item';
-  item.innerHTML = `
-    <img src="${data.image_url}" alt="${data.style_name} portrait" loading="lazy" />
-    <div class="gallery-item-overlay">
-      <span class="gallery-item-label">${data.style_emoji} ${data.style_name}</span>
-    </div>
-  `;
-  item.addEventListener('click', () => openLightbox(data));
-  grid.prepend(item);
-}
-
-// ===== Lightbox =====
-function openLightbox(data) {
-  $('lightboxImg').src = data.image_url;
-  $('lightboxStyle').textContent = `${data.style_emoji} ${data.style_name}`;
-  $('lightboxPrompt').textContent = data.revised_prompt || data.enhanced_prompt || '';
-  const dl = $('lightboxDownload');
-  dl.href = data.image_url;
-  dl.download = `portrait-${data.image_id}.png`;
-  $('lightbox').classList.remove('hidden');
-  document.body.style.overflow = 'hidden';
-}
-
-function closeLightbox() {
-  $('lightbox').classList.add('hidden');
-  document.body.style.overflow = '';
-  $('lightboxImg').src = '';
-}
-
-// ===== Health Check =====
-async function updateStatus() {
-  try {
-    const h = await API.healthCheck();
-    const dot = document.querySelector('.status-dot');
-    const text = document.querySelector('.status-text');
-    if (h && h.anthropic_configured && h.openai_configured) {
-      dot.classList.add('ok');
-      text.textContent = 'APIs connected';
+    const h = await api("/api/health");
+    const pill = $("gpuPill");
+    if (h.gpu.available) {
+      pill.classList.add("ok");
+      $("gpuText").textContent = `${h.gpu.name} · ${h.gpu.vram_gb}GB · ${h.gpu.compute_capability}`;
     } else {
-      dot.classList.add('error');
-      const missing = [];
-      if (!h?.anthropic_configured) missing.push('Anthropic');
-      if (!h?.openai_configured) missing.push('OpenAI');
-      text.textContent = `Missing: ${missing.join(', ')}`;
-      showToast('warning', 'API keys missing', `Configure: ${missing.join(', ')} in .env`);
+      pill.classList.add("bad");
+      $("gpuText").textContent = "no CUDA GPU";
     }
-  } catch {
-    document.querySelector('.status-dot').classList.add('error');
-    document.querySelector('.status-text').textContent = 'Backend offline';
-  }
+    if (!h.ai_toolkit_ready) toast("ai-toolkit not found — run runpod/setup.sh", "error");
+    if (!h.hf_token_configured) toast("HF_TOKEN not set — needed for FLUX.1-dev", "error");
+  } catch (e) { $("gpuText").textContent = "backend offline"; }
 }
 
-// ===== Init =====
-async function init() {
-  // Load styles
+/* ── Projects ── */
+async function loadProjects(select) {
+  const projects = await api("/api/projects");
+  const sel = $("projectSelect");
+  sel.innerHTML = "";
+  projects.forEach((p) => {
+    const opt = document.createElement("option");
+    opt.value = p.name;
+    opt.textContent = `${p.name}  (${p.image_count} imgs)`;
+    sel.appendChild(opt);
+  });
+  if (projects.length) {
+    state.project = select || projects[0].name;
+    sel.value = state.project;
+    updateProjectMeta(projects.find((p) => p.name === state.project));
+  } else {
+    state.project = null;
+    $("projectMeta").textContent = "no projects yet — create one";
+  }
+}
+function updateProjectMeta(p) {
+  if (!p) { $("projectMeta").textContent = ""; return; }
+  $("projectMeta").textContent =
+    `${p.image_count} images · ${p.captioned_count} captioned · ${p.lora_count} LoRAs`;
+}
+$("projectSelect").addEventListener("change", (e) => {
+  state.project = e.target.value;
+  loadThumbs();
+});
+$("newProjectBtn").addEventListener("click", async () => {
+  const name = prompt("New project name (letters, digits, - or _):");
+  if (!name) return;
   try {
-    const styles = await API.loadStyles();
-    renderStyleGrid(styles);
-  } catch {
-    showToast('error', 'Could not load styles', 'Is the backend running?');
-  }
+    await api("/api/projects", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    await loadProjects(name);
+    loadThumbs();
+    toast(`Project “${name}” created`, "success");
+  } catch (e) { toast(e.message, "error"); }
+});
 
-  // Upload area click
-  $('uploadArea').addEventListener('click', e => {
-    if (e.target === $('browseBtn') || e.target === $('uploadArea') || e.target.closest('.upload-placeholder')) {
-      $('fileInput').click();
-    }
-  });
-  $('browseBtn').addEventListener('click', e => { e.stopPropagation(); $('fileInput').click(); });
+/* ── Step 1: dataset upload ── */
+const dz = $("dropzone");
+$("browseBtn").addEventListener("click", (e) => { e.stopPropagation(); $("fileInput").click(); });
+dz.addEventListener("click", () => $("fileInput").click());
+["dragover", "dragenter"].forEach((ev) =>
+  dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add("drag"); }));
+["dragleave", "drop"].forEach((ev) =>
+  dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove("drag"); }));
+dz.addEventListener("drop", (e) => uploadFiles(e.dataTransfer.files));
+$("fileInput").addEventListener("change", (e) => uploadFiles(e.target.files));
 
-  // File input
-  $('fileInput').addEventListener('change', e => {
-    if (e.target.files[0]) setPhoto(e.target.files[0]);
-  });
-
-  // Drag and drop
-  const ua = $('uploadArea');
-  ua.addEventListener('dragenter', e => { e.preventDefault(); ua.classList.add('drag-over'); });
-  ua.addEventListener('dragover', e => { e.preventDefault(); ua.classList.add('drag-over'); });
-  ua.addEventListener('dragleave', e => { if (!ua.contains(e.relatedTarget)) ua.classList.remove('drag-over'); });
-  ua.addEventListener('drop', e => {
-    e.preventDefault();
-    ua.classList.remove('drag-over');
-    const file = e.dataTransfer?.files[0];
-    if (file) setPhoto(file);
-  });
-
-  // Buttons
-  $('removePhotoBtn').addEventListener('click', e => { e.stopPropagation(); clearPhoto(); });
-  $('analyzeBtn').addEventListener('click', handleAnalyze);
-  $('generateBtn').addEventListener('click', handleGenerate);
-
-  // Scene/appearance input → update generate btn
-  $('sceneInput').addEventListener('input', updateGenerateBtn);
-  $('appearanceInput').addEventListener('input', updateGenerateBtn);
-
-  // Lightbox
-  $('lightboxClose').addEventListener('click', closeLightbox);
-  $('lightboxBackdrop').addEventListener('click', closeLightbox);
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
-
-  // Health
-  updateStatus();
+async function uploadFiles(fileList) {
+  if (!state.project) { toast("Create or select a project first", "error"); return; }
+  const files = [...fileList].filter((f) => f.type.startsWith("image/"));
+  if (!files.length) return;
+  const fd = new FormData();
+  files.forEach((f) => fd.append("files", f));
+  overlay(true, `Uploading ${files.length} image(s)…`);
+  try {
+    const r = await api(`/api/projects/${state.project}/images`, { method: "POST", body: fd });
+    toast(`Added ${r.processed} image(s)` + (r.skipped_small ? `, skipped ${r.skipped_small} too small` : ""), "success");
+    (r.warnings || []).slice(0, 3).forEach((w) => toast(w, "error"));
+    await loadThumbs();
+    await loadProjects(state.project);
+  } catch (e) { toast(e.message, "error"); }
+  finally { overlay(false); }
 }
 
-document.addEventListener('DOMContentLoaded', init);
+async function loadThumbs() {
+  if (!state.project) { $("thumbGrid").innerHTML = ""; $("toCaptionBtn").disabled = true; return; }
+  const data = await api(`/api/projects/${state.project}/dataset`);
+  const grid = $("thumbGrid");
+  grid.innerHTML = "";
+  data.items.forEach((it) => {
+    const div = document.createElement("div");
+    div.className = "thumb";
+    div.innerHTML =
+      `<img src="/datasets/${state.project}/${it.image}" loading="lazy" />` +
+      `<button class="thumb-del" data-img="${it.image}">✕</button>`;
+    grid.appendChild(div);
+  });
+  grid.querySelectorAll(".thumb-del").forEach((b) =>
+    b.addEventListener("click", async () => {
+      await api(`/api/projects/${state.project}/images/${b.dataset.img}`, { method: "DELETE" });
+      loadThumbs(); loadProjects(state.project);
+    }));
+  $("toCaptionBtn").disabled = data.items.length === 0;
+}
+$("toCaptionBtn").addEventListener("click", () => goStep(2));
+
+/* ── Step 2: captioning ── */
+async function loadDataset() {
+  if (!state.project) return;
+  const data = await api(`/api/projects/${state.project}/dataset`);
+  const list = $("captionList");
+  list.innerHTML = "";
+  let allCaptioned = data.items.length > 0;
+  data.items.forEach((it) => {
+    if (!it.caption) allCaptioned = false;
+    const row = document.createElement("div");
+    row.className = "caption-item";
+    row.innerHTML =
+      `<img src="/datasets/${state.project}/${it.image}" />` +
+      `<textarea data-img="${it.image}" rows="3" placeholder="caption…">${it.caption}</textarea>`;
+    list.appendChild(row);
+  });
+  list.querySelectorAll("textarea").forEach((ta) =>
+    ta.addEventListener("blur", async () => {
+      await api(`/api/projects/${state.project}/caption/${ta.dataset.img}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ caption: ta.value }),
+      });
+    }));
+  $("toTrainBtn").disabled = !allCaptioned;
+}
+$("captionBtn").addEventListener("click", async () => {
+  if (!state.project) return;
+  const trigger = $("triggerInput").value.trim();
+  $("trainTrigger").value = trigger;
+  try {
+    await api(`/api/projects/${state.project}/caption`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ trigger_word: trigger, overwrite: $("overwriteCaptions").checked }),
+    });
+    $("captionProgress").classList.remove("hidden");
+    pollCaption();
+  } catch (e) { toast(e.message, "error"); }
+});
+function pollCaption() {
+  clearInterval(state.captionPoll);
+  state.captionPoll = setInterval(async () => {
+    const s = await api("/api/caption/status");
+    $("captionFill").style.width = `${s.percent || 0}%`;
+    $("captionText").textContent =
+      s.status === "running" ? `Captioning ${s.done}/${s.total} — ${s.current}` : s.status;
+    if (s.status !== "running") {
+      clearInterval(state.captionPoll);
+      if (s.status === "failed") toast(`Captioning failed: ${s.error}`, "error");
+      else toast("Captioning complete", "success");
+      loadDataset();
+    }
+  }, 1000);
+}
+$("toTrainBtn").addEventListener("click", () => goStep(3));
+
+/* ── Step 3: training ── */
+$("stepsRange").addEventListener("input", (e) => $("stepsVal").textContent = e.target.value);
+$("rankRange").addEventListener("input", (e) => $("rankVal").textContent = e.target.value);
+$("trainBtn").addEventListener("click", async () => {
+  if (!state.project) return;
+  const body = {
+    trigger_word: $("trainTrigger").value.trim(),
+    steps: +$("stepsRange").value,
+    learning_rate: +$("lrSelect").value,
+    rank: +$("rankRange").value,
+  };
+  try {
+    await api(`/api/projects/${state.project}/train`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    $("trainMonitor").classList.remove("hidden");
+    $("cancelTrainBtn").classList.remove("hidden");
+    $("trainBtn").disabled = true;
+    pollTrain();
+    toast("Training started", "success");
+  } catch (e) { toast(e.message, "error"); }
+});
+$("cancelTrainBtn").addEventListener("click", async () => {
+  await api("/api/train/cancel", { method: "POST" });
+  toast("Cancelling…");
+});
+function pollTrain() {
+  clearInterval(state.trainPoll);
+  state.trainPoll = setInterval(async () => {
+    const s = await api("/api/train/status");
+    const badge = $("trainStatusBadge");
+    badge.textContent = s.status;
+    badge.className = `monitor-status ${s.status}`;
+    $("trainFill").style.width = `${s.percent || 0}%`;
+    $("trainStepText").textContent =
+      `step ${s.step || 0}/${s.total_steps || 0} · ${s.percent || 0}% · ${fmtTime(s.elapsed_sec)}`;
+    if (s.log_tail) { const log = $("trainLog"); log.textContent = s.log_tail.join("\n"); log.scrollTop = log.scrollHeight; }
+    if (["completed", "failed", "cancelled", "idle"].includes(s.status)) {
+      clearInterval(state.trainPoll);
+      $("trainBtn").disabled = false;
+      $("cancelTrainBtn").classList.add("hidden");
+      if (s.status === "completed") { toast("🎉 LoRA trained! Head to Generate.", "success"); loadProjects(state.project); }
+      else if (s.status === "failed") toast(`Training failed: ${s.error}`, "error");
+    }
+  }, 2000);
+}
+const fmtTime = (s) => { s = s || 0; const m = Math.floor(s / 60); return m ? `${m}m ${s % 60}s` : `${s}s`; };
+
+/* ── Step 4: generation ── */
+$("scaleRange").addEventListener("input", (e) => $("scaleVal").textContent = (+e.target.value).toFixed(2));
+$("genStepsRange").addEventListener("input", (e) => $("genStepsVal").textContent = e.target.value);
+$("guidanceRange").addEventListener("input", (e) => $("guidanceVal").textContent = e.target.value);
+document.querySelectorAll(".seg-btn").forEach((b) =>
+  b.addEventListener("click", () => {
+    document.querySelectorAll(".seg-btn").forEach((x) => x.classList.remove("active"));
+    b.classList.add("active");
+    state.aspect = { w: +b.dataset.w, h: +b.dataset.h };
+  }));
+
+async function loadLoras() {
+  const loras = await api("/api/loras");
+  const sel = $("loraSelect");
+  sel.innerHTML = `<option value="">— base model (no LoRA) —</option>`;
+  loras.forEach((l) => {
+    const opt = document.createElement("option");
+    opt.value = l.path;
+    opt.textContent = `${l.project} / ${l.name} (${l.size_mb}MB)`;
+    sel.appendChild(opt);
+  });
+  if (loras.length) sel.selectedIndex = 1;
+}
+$("genBtn").addEventListener("click", async () => {
+  const prompt = $("genPrompt").value.trim();
+  if (!prompt) { toast("Enter a prompt", "error"); return; }
+  const body = {
+    prompt, lora: $("loraSelect").value || null,
+    lora_scale: +$("scaleRange").value,
+    width: state.aspect.w, height: state.aspect.h,
+    steps: +$("genStepsRange").value,
+    guidance_scale: +$("guidanceRange").value,
+  };
+  overlay(true, "Generating image — this can take 20–40s…");
+  try {
+    await api("/api/generate", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    await loadGallery();
+    toast("Image generated", "success");
+  } catch (e) { toast(e.message, "error"); }
+  finally { overlay(false); }
+});
+
+async function loadGallery() {
+  const imgs = await api("/api/generated");
+  const grid = $("galleryGrid");
+  if (!imgs.length) { grid.innerHTML = `<p class="gallery-empty">No images yet — generate your first one.</p>`; return; }
+  grid.innerHTML = "";
+  imgs.forEach((im) => {
+    const div = document.createElement("div");
+    div.className = "gallery-item";
+    div.innerHTML = `<img src="${im.url}" loading="lazy" />`;
+    div.addEventListener("click", () => openLightbox(im.url));
+    grid.appendChild(div);
+  });
+}
+
+/* ── Lightbox ── */
+function openLightbox(url) {
+  $("lightboxImg").src = url;
+  $("lightboxDownload").href = url;
+  $("lightbox").classList.remove("hidden");
+}
+$("lightboxClose").addEventListener("click", () => $("lightbox").classList.add("hidden"));
+$("lightboxBg").addEventListener("click", () => $("lightbox").classList.add("hidden"));
+
+/* ── Boot ── */
+(async function init() {
+  await health();
+  await loadProjects();
+  await loadThumbs();
+})();
