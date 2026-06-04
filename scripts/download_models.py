@@ -26,9 +26,9 @@ def main() -> None:
         cache_dir=str(paths.models),
         token=settings.hf_token or None,
     )
-    print("Downloading microsoft/Florence-2-large (captioning) …")
+    print("Downloading florence-community/Florence-2-large (captioning) …")
     snapshot_download(
-        repo_id="microsoft/Florence-2-large",
+        repo_id="florence-community/Florence-2-large",
         cache_dir=str(paths.models),
     )
     print("Done.")

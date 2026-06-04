@@ -30,13 +30,14 @@ per second while running.
 
 1. Go to **runpod.io → Pods → Deploy**.
 2. **GPU:** pick **RTX 5090** (32 GB VRAM). A single 5090 trains a Flux LoRA comfortably.
-3. **Template:** choose a **CUDA 12.8+** PyTorch image. Good choices:
-   - `runpod/pytorch:2.8.0-py3.11-cuda12.8.1-devel-ubuntu22.04`
-   - or any "PyTorch 2.7/2.8 / CUDA 12.8" community template.
+3. **Template:** use a **CUDA 12.8 / PyTorch 2.8** image. Recommended:
+   - `runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404` — CUDA 12.8.1 · torch 2.8.0 · Py 3.11
+   - or any "PyTorch 2.7/2.8 · CUDA 12.8" template.
 
    > ⚠️ **Do not** use a CUDA 12.4 / torch 2.3–2.6 template. Blackwell (sm_120)
-   > needs cu128. `runpod/setup.sh` installs the right torch regardless, but
-   > starting from a 12.8 base avoids a long reinstall.
+   > needs cu128. Note: some RunPod "torch 2.8" images have shipped torch
+   > 2.4.1+cu124 by mistake — `runpod/setup.sh` verifies the installed torch and
+   > auto-reinstalls the correct cu128 build if needed, so you're covered either way.
 4. **Disk:** Container disk ≥ 50 GB. Add a **Network Volume** (≥ 60 GB) mounted at
    `/workspace` so the ~24 GB FLUX.1-dev download and your datasets/LoRAs persist
    across pod restarts.

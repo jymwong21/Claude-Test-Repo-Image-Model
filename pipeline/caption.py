@@ -7,7 +7,11 @@ prompts to invoke your subject. Florence-2 describes the scene; we prepend the
 trigger and write one `<image>.txt` sidecar per image, which is exactly what
 ai-toolkit consumes.
 
-Florence-2-large is small (~0.7 B) and loads quickly even alongside Flux.
+This uses the NATIVE transformers Florence-2 integration (transformers >= 5,
+repo `florence-community/Florence-2-large`): no `trust_remote_code`, so it stays
+compatible with the transformers 5.x that ai-toolkit pins (the old remote-code
+path breaks on transformers >= 4.50). Florence-2-large is small (~0.7 B) and
+loads quickly even alongside Flux.
 """
 from __future__ import annotations
 
@@ -20,7 +24,7 @@ from PIL import Image
 
 from .config import paths, settings
 
-_MODEL_ID = "microsoft/Florence-2-large"
+_MODEL_ID = "florence-community/Florence-2-large"
 _TASK = "<DETAILED_CAPTION>"
 
 # Deterministic stub descriptions used in mock mode (no Florence-2 download).
@@ -44,14 +48,16 @@ def _load_model():
         return _model, _processor
 
     import torch
-    from transformers import AutoModelForCausalLM, AutoProcessor
+    from transformers import AutoProcessor, Florence2ForConditionalGeneration
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     dtype = torch.float16 if device == "cuda" else torch.float32
-    _model = AutoModelForCausalLM.from_pretrained(
-        _MODEL_ID, trust_remote_code=True, torch_dtype=dtype
+    # Native integration — no trust_remote_code. `dtype=` is the transformers 5.x
+    # kwarg (it replaces the old `torch_dtype`).
+    _model = Florence2ForConditionalGeneration.from_pretrained(
+        _MODEL_ID, dtype=dtype
     ).to(device)
-    _processor = AutoProcessor.from_pretrained(_MODEL_ID, trust_remote_code=True)
+    _processor = AutoProcessor.from_pretrained(_MODEL_ID)
     _model.eval()
     return _model, _processor
 
@@ -66,8 +72,7 @@ def _caption_one(image: Image.Image) -> str:
     inputs = processor(text=_TASK, images=image, return_tensors="pt").to(device, dtype)
     with torch.no_grad():
         generated_ids = model.generate(
-            input_ids=inputs["input_ids"],
-            pixel_values=inputs["pixel_values"],
+            **inputs,
             max_new_tokens=256,
             num_beams=3,
             do_sample=False,
