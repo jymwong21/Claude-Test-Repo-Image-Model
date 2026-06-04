@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Portrait Studio — AI Image Generator</title>
+  <link rel="stylesheet" href="/assets/style.css" />
+</head>
+<body>
+
+  <!-- Navbar -->
+  <nav class="navbar">
+    <div class="nav-inner">
+      <span class="nav-logo">🎭 Portrait Studio</span>
+      <div class="nav-status" id="navStatus">
+        <span class="status-dot"></span>
+        <span class="status-text">Checking APIs…</span>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <header class="hero">
+    <div class="hero-inner">
+      <h1 class="hero-title">
+        <span class="gradient-text">Generate Art</span><br />of Yourself
+      </h1>
+      <p class="hero-sub">
+        Upload a photo · Choose a style · Watch Claude craft your portrait
+      </p>
+    </div>
+  </header>
+
+  <!-- Step 1: Upload -->
+  <main class="container">
+    <section id="step1" class="card step-card">
+      <div class="step-header">
+        <span class="step-badge">01</span>
+        <div>
+          <h2 class="step-title">Upload Your Photo</h2>
+          <p class="step-desc">Claude will analyze your appearance to capture your unique features.</p>
+        </div>
+      </div>
+
+      <div class="upload-area" id="uploadArea">
+        <input type="file" id="fileInput" accept="image/*" hidden />
+        <div class="upload-placeholder" id="uploadPlaceholder">
+          <div class="upload-icon">📸</div>
+          <p class="upload-primary">Drop your photo here</p>
+          <p class="upload-secondary">or <button class="link-btn" id="browseBtn">browse files</button></p>
+          <p class="upload-hint">JPG, PNG, WebP · max 10 MB</p>
+        </div>
+        <div class="upload-preview hidden" id="uploadPreview">
+          <img id="previewImg" src="" alt="Your photo" />
+          <button class="btn btn-ghost remove-photo" id="removePhotoBtn">✕ Remove</button>
+        </div>
+      </div>
+
+      <button class="btn btn-primary" id="analyzeBtn" disabled>
+        <span>Analyze My Photo</span>
+        <span class="btn-arrow">→</span>
+      </button>
+    </section>
+
+    <!-- Step 2: Customize -->
+    <section id="step2" class="card step-card hidden">
+      <div class="step-header">
+        <span class="step-badge">02</span>
+        <div>
+          <h2 class="step-title">Customize Your Portrait</h2>
+          <p class="step-desc">Adjust the AI-generated appearance description and choose your style.</p>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="appearanceInput">Appearance Description
+          <span class="label-hint">Edit to fine-tune Claude's analysis</span>
+        </label>
+        <textarea id="appearanceInput" class="form-textarea" rows="5"
+          placeholder="Your appearance description will appear here after photo analysis…"></textarea>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Art Style</label>
+        <div class="style-grid" id="styleGrid"><!-- populated by JS --></div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="sceneInput">Scene / Setting
+          <span class="label-hint">Where should your portrait take place?</span>
+        </label>
+        <textarea id="sceneInput" class="form-textarea" rows="3"
+          placeholder="e.g. Standing on a misty mountain peak at golden hour, wind in hair…"></textarea>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="detailsInput">Additional Details
+          <span class="label-hint">Optional — clothing, mood, props, lighting</span>
+        </label>
+        <input type="text" id="detailsInput" class="form-input"
+          placeholder="e.g. wearing a leather jacket, smiling confidently" />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Orientation</label>
+        <div class="orientation-group">
+          <label class="orientation-option">
+            <input type="radio" name="orientation" value="1024x1024" checked />
+            <span class="orientation-card">
+              <span class="orientation-icon square-icon"></span>
+              <span>Square</span>
+            </span>
+          </label>
+          <label class="orientation-option">
+            <input type="radio" name="orientation" value="1792x1024" />
+            <span class="orientation-card">
+              <span class="orientation-icon landscape-icon"></span>
+              <span>Landscape</span>
+            </span>
+          </label>
+          <label class="orientation-option">
+            <input type="radio" name="orientation" value="1024x1792" />
+            <span class="orientation-card">
+              <span class="orientation-icon portrait-icon"></span>
+              <span>Portrait</span>
+            </span>
+          </label>
+        </div>
+      </div>
+
+      <button class="btn btn-generate" id="generateBtn" disabled>
+        <span>✨ Generate My Portrait</span>
+      </button>
+    </section>
+
+    <!-- Gallery -->
+    <section id="gallery" class="gallery-section hidden">
+      <h2 class="gallery-title">Your Generated Portraits</h2>
+      <div class="gallery-grid" id="galleryGrid"><!-- populated by JS --></div>
+    </section>
+  </main>
+
+  <!-- Loading overlay -->
+  <div class="loading-overlay hidden" id="loadingOverlay">
+    <div class="loading-card">
+      <div class="spinner"></div>
+      <p class="loading-title" id="loadingTitle">Working…</p>
+      <p class="loading-sub" id="loadingSub">Please wait</p>
+    </div>
+  </div>
+
+  <!-- Toast container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- Lightbox -->
+  <div class="lightbox hidden" id="lightbox">
+    <div class="lightbox-backdrop" id="lightboxBackdrop"></div>
+    <div class="lightbox-panel">
+      <button class="lightbox-close" id="lightboxClose">✕</button>
+      <img class="lightbox-img" id="lightboxImg" src="" alt="Generated portrait" />
+      <div class="lightbox-meta">
+        <p class="lightbox-style" id="lightboxStyle"></p>
+        <p class="lightbox-prompt" id="lightboxPrompt"></p>
+        <a class="btn btn-primary lightbox-download" id="lightboxDownload" download>
+          ⬇ Download
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <script src="/assets/app.js"></script>
+</body>
+</html>
